@@ -1,6 +1,9 @@
 import requests
+import keys
 from bs4 import BeautifulSoup
 import time
+
+bot = Bot(token=config.TELEGRAM_BOT_TOKEN)
 
 def scrape_matches():
     # URL of the website you want to scrape (update this with the real URL)
