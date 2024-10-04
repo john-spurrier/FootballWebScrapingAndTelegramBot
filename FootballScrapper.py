@@ -1,120 +1,121 @@
 import requests
 import keys
+import apiResponse
 from telegram import Bot
-from bs4 import BeautifulSoup
 import time
+import asyncio
 
+# Set up the Telegram bot
 bot = Bot(token=keys.TELEGRAM_BOT_TOKEN)
 
-def scrape_matches():
-    # URL of the website you want to scrape (update this with the real URL)
-    url = 'https://www.ncaa.com/scoreboard/football/fbs'  # Replace with the actual URL
+# Function to call the API and get match details
+def get_matches():
+    response = apiResponse.response
 
-    # urlForFinal = 'https://www.ncaa.com/scoreboard/football/fbs/2024/05/all-conf'
-
-    # Send a GET request to fetch the webpage content
-    response = requests.get(url)
-
-    # code for live scoring of games
-    # if responseForCurrent.status_code == 200:
-    #     soup = BeautifulSoup(responseForCurrent.text, 'html.parser')
-    #     games = soup.find_all('div', class_='gamePod gamePod-type-game status-?')
-    #     for game in games:
-    #         teams = game.find_all('span', class_='gamePod-game-team-name')
-    #         scores = game.find_all('span', class_='gamePod-game-team-score')
-    #         if len(teams) == 2:
-    #             team_1 = teams[0].text.strip()
-    #             score_1 = scores[0].text.strip()
-    #             team_2 = teams[1].text.strip()
-    #             score_2 = scores[1].text.strip()
-    #             print(f'{team_1}: {score_1} \n{team_2}: {score_2}\n')
-    #         else:
-
-
-    print("\n")
-
-    # Check if the request was successful
     if response.status_code == 200:
-        # Parse the HTML content using BeautifulSoup
-
+        data = response.json()  # Parse the JSON response
+        events = data.get('data', {}).get('events', {}).get('events', [])
         match_list = []
-        soup = BeautifulSoup(response.text, 'html.parser')
 
-        # Find all game elements (using 'gamePod gamePod-type-game' class)
-        games = soup.find_all('div', class_='gamePod gamePod-type-game status-pre')
-        # Loop through each game and extract team names
-        for game in games:
-            # Find all span elements containing team names
-            teams = game.find_all('span', class_='gamePod-game-team-name')
+        for event in events:
+            teams = event.get('teams', [])
+            event_status = event.get('eventStatus', {}).get('name', 'Unknown')
+            event_time = event.get('canonicalStartDate', {}).get('full', 'Unknown Time')
 
-            # Ensure exactly 2 teams are found
             if len(teams) == 2:
-                team_1 = teams[0].text.strip()
-                team_2 = teams[1].text.strip()
-                match = f'Match: {team_1} vs {team_2}'
-                match_list.append(match)
-            else:
-                print("Unexpected structure: could not find two teams")
-    else:
-        print(f"Failed to retrieve the page. Status code: {response.status_code}")
+                team_1 = teams[0].get('location', 'Unknown') + " " + teams[0].get('nickname', 'Unknown')
+                team_1_score = teams[0].get('score', 0)
+                team_2 = teams[1].get('location', 'Unknown') + " " + teams[1].get('nickname', 'Unknown')
+                team_2_score = teams[1].get('score', 0)
 
-    return match_list
+                match = {
+                    "matchup": f"{team_1} vs {team_2}",
+                    "score": f"{team_1_score} - {team_2_score}",
+                    "status": event_status,
+                    "time": event_time,
+                    "team_1_score": team_1_score,
+                    "team_2_score": team_2_score
+                }
+                match_list.append(match)        
+        return match_list
+    else:
+        print(f"Failed to retrieve data from API. Status code: {response.status_code}")
+        return []
 
 # Function to display and select games to track
 def select_games_to_track(match_list):
     print("\nAvailable games:")
     for idx, match in enumerate(match_list):
-        print(f"{idx + 1}: {match}")
+        print(f"{idx + 1}: {match['matchup']} | Status: {match['status']}")
 
     selected_indices = input("\nEnter the numbers of the games you want to track, separated by commas: ")
 
-    # Convert the input into a list of indices (validate user input)
     try:
         selected_indices = [int(i.strip()) - 1 for i in selected_indices.split(",")]
     except ValueError:
         print("Invalid input. Please enter valid numbers.")
         return []
 
-    # Filter the matches to only the ones the user selected
     selected_matches = [match_list[i] for i in selected_indices if 0 <= i < len(match_list)]
 
     return selected_matches
 
+# Async function to track selected games
+async def track_selected_games(selected_matches):
+    previous_scores = {match['matchup']: {"team_1_score": match["team_1_score"], "team_2_score": match["team_2_score"]} for match in selected_matches}
 
-def track_selected_games(selected_matches):
+    # Send an initial message to Telegram with the list of games being tracked
+    tracking_message = "Tracking the following games:\n"
+    for match in selected_matches:
+        tracking_message += f"{match['matchup']}\n"
+    
+    await bot.send_message(chat_id=keys.TELEGRAM_CHAT_ID, text=tracking_message)
+
     while True:
         print("\nUpdating selected games...")
 
-        # For demonstration purposes, we'll re-use the scrape_all_matches function
-        # and only print the selected matches
-        current_matches = scrape_matches()
+        current_matches = get_matches()
 
         if not current_matches:
             print("No matches available or unable to retrieve data.")
         else:
-            for match in selected_matches:
-                if match in current_matches:
-                    print(f"Match: {match}")
-                else:
-                    print(f"Match: {match} - Update not available")
+            for selected_match in selected_matches:
+                # Find the corresponding current match
+                for current_match in current_matches:
+                    if selected_match['matchup'] == current_match['matchup']:
+                        prev_score = previous_scores[selected_match['matchup']]
+                        current_score = {
+                            "team_1_score": current_match["team_1_score"],
+                            "team_2_score": current_match["team_2_score"]
+                        }
+
+                        # Check if the score has changed
+                        if prev_score != current_score:
+                            # Update the previous score
+                            previous_scores[selected_match['matchup']] = current_score
+
+                            # Print and send update
+                            print(f"Score Update: {current_match['matchup']} | New Score: {current_match['score']} | Status: {current_match['status']} | Time: {current_match['time']}")
+                            await bot.send_message(chat_id=keys.TELEGRAM_CHAT_ID, text=f"Update: {current_match['matchup']} | Score: {current_match['score']} | Status: {current_match['status']}")
 
         # Wait for 60 seconds before the next update
-        time.sleep(60)
+        await asyncio.sleep(60)
 
-# Main program logic
-if __name__ == "__main__":
-    # Step 1: Get all matches
-    all_matches = scrape_matches()
+# Main async function
+async def main():
+    all_matches = get_matches()
 
     if not all_matches:
         print("No matches found or unable to retrieve data.")
     else:
-        # Step 2: Allow the user to select which games to track
         selected_games = select_games_to_track(all_matches)
 
         if selected_games:
-            # Step 3: Track the selected games and get updates
-            track_selected_games(selected_games)
+            # Track the selected games
+            await track_selected_games(selected_games)
         else:
             print("No games selected for tracking.")
 
+# Run the main function
+if __name__ == "__main__":
+    asyncio.run(main())
