@@ -10,7 +10,8 @@ bot = Bot(token=keys.TELEGRAM_BOT_TOKEN)
 
 # Function to call the API and get match details
 def get_matches():
-    response = apiResponse.response
+
+    response = apiResponse.getResponse()
 
     if response.status_code == 200:
         data = response.json()  # Parse the JSON response
@@ -62,41 +63,49 @@ def select_games_to_track(match_list):
 
 # Async function to track selected games
 async def track_selected_games(selected_matches):
+    # Store the previous scores
     previous_scores = {match['matchup']: {"team_1_score": match["team_1_score"], "team_2_score": match["team_2_score"]} for match in selected_matches}
 
     # Send an initial message to Telegram with the list of games being tracked
     tracking_message = "Tracking the following games:\n"
     for match in selected_matches:
-        tracking_message += f"{match['matchup']}\n"
+        tracking_message += f"{match['matchup']} | Status: {match['status']} | Time: {match['time']}\n"
     
     await bot.send_message(chat_id=keys.TELEGRAM_CHAT_ID, text=tracking_message)
 
     while True:
         print("\nUpdating selected games...")
 
+        # Fetch the latest match information
         current_matches = get_matches()
 
         if not current_matches:
             print("No matches available or unable to retrieve data.")
         else:
+            # Loop through the selected matches
             for selected_match in selected_matches:
                 # Find the corresponding current match
                 for current_match in current_matches:
                     if selected_match['matchup'] == current_match['matchup']:
+                        # Extract current score data
                         prev_score = previous_scores[selected_match['matchup']]
                         current_score = {
                             "team_1_score": current_match["team_1_score"],
                             "team_2_score": current_match["team_2_score"]
                         }
+                        
+                        # Debugging: Print the current and previous scores to verify
+                        print(f"Previous score for {selected_match['matchup']}: {prev_score}")
+                        print(f"Current score for {selected_match['matchup']}: {current_score}")
 
                         # Check if the score has changed
                         if prev_score != current_score:
-                            # Update the previous score
-                            previous_scores[selected_match['matchup']] = current_score
-
                             # Print and send update
                             print(f"Score Update: {current_match['matchup']} | New Score: {current_match['score']} | Status: {current_match['status']} | Time: {current_match['time']}")
-                            await bot.send_message(chat_id=keys.TELEGRAM_CHAT_ID, text=f"Update: {current_match['matchup']} | Score: {current_match['score']} | Status: {current_match['status']}")
+                            await bot.send_message(chat_id=keys.TELEGRAM_CHAT_ID, text=f"Update: {current_match['matchup']} | Score: {current_match['score']}")
+
+                            # Update the previous score after the update is sent
+                            previous_scores[selected_match['matchup']] = current_score
 
         # Wait for 60 seconds before the next update
         await asyncio.sleep(60)
